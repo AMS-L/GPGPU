@@ -73,21 +73,6 @@ float lab_distance(lab image1, lab image2) {
     return sqrt(deltaL * deltaL + deltaA * deltaA + deltaB * deltaB);
 }
 
-void rgb_to_grayscale(uint8_t* buffer, int width, int height, int stride) {
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            uint8_t* pixel = &buffer[y * stride + x * 3];
-            uint8_t r = pixel[0];
-            uint8_t g = pixel[1];
-            uint8_t b = pixel[2];
-            uint8_t gray = static_cast<uint8_t>(0.299 * r + 0.587 * g + 0.114 * b);
-            pixel[0] = gray;
-            pixel[1] = gray;
-            pixel[2] = gray;
-        }
-    }
-}
-
 void erode(uint8_t* buffer, int width, int height, int stride, int pixel_stride) {
     uint8_t* temp = new uint8_t[width * height];
 
@@ -170,16 +155,13 @@ void grayscale_to_rgb(uint8_t* buffer_gray, uint8_t* buffer_rgb, int width, int 
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             int idx_gray = y * width + x;
-            int idx_rgb = y * width * 3 + x * 3;
-
+            int idx_rgb = y * stride + x * pixel_stride;
             buffer_rgb[idx_rgb] = buffer_gray[idx_gray];     // R
             buffer_rgb[idx_rgb + 1] = buffer_gray[idx_gray]; // G
             buffer_rgb[idx_rgb + 2] = buffer_gray[idx_gray]; // B
         }
     }
 }
-
-
 
 extern "C" {
     void filter_impl(uint8_t* buffer, int width, int height, int stride, int pixel_stride)
