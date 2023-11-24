@@ -77,7 +77,8 @@ float lab_distance(lab image1, lab image2) {
     return sqrt(deltaL * deltaL + deltaA * deltaA + deltaB * deltaB);
 }
 
-void erode(uint8_t* buffer, int width, int height, int stride, int pixel_stride) {
+
+void erode(uint8_t* buffer_gray, int width, int height, int stride, int pixel_stride) {
     uint8_t* temp = new uint8_t[width * height];
 
     for (int y = 0; y < height; ++y) {
@@ -88,7 +89,7 @@ void erode(uint8_t* buffer, int width, int height, int stride, int pixel_stride)
                     int nx = x + i;
                     int ny = y + j;
                     if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                        uint8_t pixel = buffer[ny * stride + nx * pixel_stride];
+                        uint8_t pixel = buffer_gray[ny * width + nx];
                         min_pixel = std::min(min_pixel, pixel);
                     }
                 }
@@ -99,25 +100,26 @@ void erode(uint8_t* buffer, int width, int height, int stride, int pixel_stride)
 
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            buffer[y * stride + x * pixel_stride] = temp[y * width + x];
+            buffer_gray[0] = 1;
+            buffer_gray[y * width + x] = temp[y * width + x];
         }
     }
 
     delete[] temp;
 }
 
-void dilate(uint8_t* buffer, int width, int height, int stride, int pixel_stride) {
-    uint8_t* temp = new uint8_t[width * height];
+void dilate(uint8_t* buffer_gray, int width, int height, int stride, int pixel_stride) {
+    uint8_t* temp = new uint8_t[height * stride];
 
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             uint8_t max_pixel = 0;
-            for (int j = -1; j <= 1; ++j) {
+            for (int j = -1; j <= 1; ++j) { // On peut modifier la range de la dilatation
                 for (int i = -1; i <= 1; ++i) {
                     int nx = x + i;
                     int ny = y + j;
                     if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                        uint8_t pixel = buffer[ny * stride + nx * pixel_stride];
+                        uint8_t pixel = buffer_gray[ny * width + nx];
                         max_pixel = std::max(max_pixel, pixel);
                     }
                 }
@@ -128,17 +130,14 @@ void dilate(uint8_t* buffer, int width, int height, int stride, int pixel_stride
 
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            buffer[y * stride + x * pixel_stride] = temp[y * width + x];
+            buffer_gray[y * width + x] = temp[y * width + x];
         }
     }
-
     delete[] temp;
 }
 
-uint8_t* rgb_to_grayscale(uint8_t* buffer, int width, int height, int stride, int pixel_stride) {
+void rgb_to_grayscale(uint8_t* buffer, uint8_t* grayscale, int width, int height, int stride, int pixel_stride) {
 
-    // MEMORY ALLOCATION. DO NOT FORGET TO FREE
-    uint8_t* grayscale = (uint8_t*)malloc(width * height);
 
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
@@ -151,8 +150,6 @@ uint8_t* rgb_to_grayscale(uint8_t* buffer, int width, int height, int stride, in
             grayscale[y * width + x] =  (r + g + b) / 3;
         }
     }
-
-    return grayscale;
 }
 
 void grayscale_to_rgb(uint8_t* buffer_gray, uint8_t* buffer_rgb, int width, int height, int stride, int pixel_stride) {
@@ -167,6 +164,23 @@ void grayscale_to_rgb(uint8_t* buffer_gray, uint8_t* buffer_rgb, int width, int 
     }
 }
 
+// Function to get the RGB values of a pixel from a buffer
+rgb get_rgb(uint8_t* buffer, int i, int j, int stride, int pixel_stride) {
+    rgb pixel;
+    int index = i * stride + j * pixel_stride;
+    pixel.r = buffer[index];
+    pixel.g = buffer[index + 1];
+    pixel.b = buffer[index + 2];
+    return pixel;
+}
+
+// Function to set a pixel in a buffer to black
+void set_black(uint8_t* buffer, int i, int j, int stride, int pixel_stride) {
+    int index = i * stride + j * pixel_stride;
+    buffer[index] = 0;     // Set red to 0
+    buffer[index + 1] = 0; // Set green to 0
+    buffer[index + 2] = 0; // Set blue to 0
+}
 
 uint8_t* background;
 
@@ -179,7 +193,30 @@ extern "C" {
             first = false;
         }
 
-        for (int y = 0; y < height; ++y)
+        for (int i = 0; i < height; i++) {
+            for (int j = 0; j < width; j++) {
+                // Get the pixel from the buffer and background
+                rgb buffer_pixel = get_rgb(buffer, i, j, stride, pixel_stride);
+                rgb background_pixel = get_rgb(background, i, j, stride, pixel_stride);
+
+                // Convert RGB to Lab
+                lab buffer_lab, background_lab;
+                rgb2lab(buffer_pixel, buffer_lab);
+                rgb2lab(background_pixel, background_lab);
+
+                // Calculate the lab distance
+                float distance = lab_distance(buffer_lab, background_lab);
+
+
+                // If the distance is zero, blackout the pixel
+                // FIX ME : Trouver un calcul (variance) pour estimer le seuil de la distance
+                if (distance < 10) {
+                    set_black(buffer, i, j, stride, pixel_stride);
+                }
+            }
+        }
+
+        /*for (int y = 0; y < height; ++y)
         {
             rgb* lineptr = (rgb*) (buffer + y * stride);
             for (int x = 0; x < width; ++x)
@@ -193,13 +230,13 @@ extern "C" {
                 }
 
             }
-        }
-
-        //uint8_t* buffer_gray = rgb_to_grayscale(buffer, width, height, stride, pixel_stride);
-        //erode(buffer_gray, width, height, stride, pixel_stride);
-        //dilate(buffer_gray, width, height, stride, pixel_stride);
-        //grayscale_to_rgb(background, buffer, width, height, stride, pixel_stride);
-        //free(buffer_gray);
+        }*/
+        uint8_t* grayscale = new uint8_t[width * height];
+        rgb_to_grayscale(buffer, grayscale, width, height, stride, pixel_stride);
+        erode(grayscale, width, height, stride, pixel_stride);
+        dilate(grayscale, width, height, stride, pixel_stride);
+        grayscale_to_rgb(grayscale, buffer, width, height, stride, pixel_stride);
+        delete[] grayscale;
 
         // You can fake a long-time process with sleep
         {
