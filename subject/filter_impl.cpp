@@ -77,9 +77,9 @@ float lab_distance(lab image1, lab image2) {
     return sqrt(deltaL * deltaL + deltaA * deltaA + deltaB * deltaB);
 }
 
-void erode(uint8_t* buffer, int width, int height, int stride, int pixel_stride) {
-    uint8_t* temp = new uint8_t[width * height];
 
+void erode(uint8_t* buffer_gray, int width, int height, int stride, int pixel_stride) {
+    uint8_t* temp = new uint8_t[width * height];
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             uint8_t min_pixel = 255;
@@ -88,7 +88,7 @@ void erode(uint8_t* buffer, int width, int height, int stride, int pixel_stride)
                     int nx = x + i;
                     int ny = y + j;
                     if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                        uint8_t pixel = buffer[ny * stride + nx * pixel_stride];
+                        uint8_t pixel = buffer_gray[ny * stride + nx * pixel_stride];
                         min_pixel = std::min(min_pixel, pixel);
                     }
                 }
@@ -99,13 +99,77 @@ void erode(uint8_t* buffer, int width, int height, int stride, int pixel_stride)
 
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            buffer[y * stride + x * pixel_stride] = temp[y * width + x];
+            //std::cout << buffer_gray[0];
+            //buffer_gray[y * stride + x * pixel_stride] = temp[y * width + x];
         }
     }
 
     delete[] temp;
 }
 
+void dilate(uint8_t* buffer_gray, int width, int height, int stride, int pixel_stride) {
+    uint8_t* temp = new uint8_t[height * stride];
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            uint8_t max_pixel = 0;
+            for (int j = -1; j <= 1; ++j) {
+                for (int i = -1; i <= 1; ++i) {
+                    int nx = x + i;
+                    int ny = y + j;
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                        uint8_t pixel = buffer_gray[ny * stride + nx * pixel_stride];
+                        max_pixel = std::max(max_pixel, pixel);
+                    }
+                }
+            }
+            temp[y * stride + x * pixel_stride] = max_pixel;
+        }
+    }
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            buffer_gray[y * stride + x * pixel_stride] = temp[y * width + x];
+        }
+    }
+    delete[] temp;
+}
+
+/*
+void dilate(uint8_t* buffer, int width, int height, int stride, int pixel_stride) {
+    uint8_t* temp = new uint8_t[height * stride * pixel_stride];
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            uint8_t max_pixel[3] = {0, 0, 0}; // Assuming RGB format
+            for (int j = -1; j <= 1; ++j) {
+                for (int i = -1; i <= 1; ++i) {
+                    int nx = x + i;
+                    int ny = y + j;
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                        int idx = (ny * stride) + (nx * pixel_stride);
+                        for (int k = 0; k < 3; ++k) { // Assuming RGB format
+                            max_pixel[k] = std::max(max_pixel[k], buffer[idx + k]);
+                        }
+                    }
+                }
+            }
+            int idx_temp = (y * stride) + (x * pixel_stride);
+            for (int k = 0; k < 3; ++k) { // Assuming RGB format
+                temp[idx_temp + k] = max_pixel[k];
+            }
+        }
+    }
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            buffer[y * stride + x * pixel_stride] = temp[y * width + x];
+        }
+    }
+    delete[] temp;
+}
+*/
+/*
 void dilate(uint8_t* buffer, int width, int height, int stride, int pixel_stride) {
     uint8_t* temp = new uint8_t[width * height];
 
@@ -134,11 +198,11 @@ void dilate(uint8_t* buffer, int width, int height, int stride, int pixel_stride
 
     delete[] temp;
 }
+*/
 
-uint8_t* rgb_to_grayscale(uint8_t* buffer, int width, int height, int stride, int pixel_stride) {
 
-    // MEMORY ALLOCATION. DO NOT FORGET TO FREE
-    uint8_t* grayscale = (uint8_t*)malloc(width * height);
+void rgb_to_grayscale(uint8_t* buffer, uint8_t* grayscale, int width, int height, int stride, int pixel_stride) {
+
 
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
@@ -151,8 +215,6 @@ uint8_t* rgb_to_grayscale(uint8_t* buffer, int width, int height, int stride, in
             grayscale[y * width + x] =  (r + g + b) / 3;
         }
     }
-
-    return grayscale;
 }
 
 void grayscale_to_rgb(uint8_t* buffer_gray, uint8_t* buffer_rgb, int width, int height, int stride, int pixel_stride) {
@@ -195,6 +257,7 @@ extern "C" {
             memcpy(background, buffer, height*stride);
             first = false;
         }
+
         for (int i = 0; i < height; i++) {
             for (int j = 0; j < width; j++) {
                 // Get the pixel from the buffer and background
@@ -233,11 +296,12 @@ extern "C" {
 
             }
         }*/
-        //uint8_t* buffer_gray = rgb_to_grayscale(buffer, width, height, stride, pixel_stride);
-        //erode(buffer_gray, width, height, stride, pixel_stride);
-        //dilate(buffer_gray, width, height, stride, pixel_stride);
-        //grayscale_to_rgb(background, buffer, width, height, stride, pixel_stride);
-        //free(buffer_gray);
+        uint8_t* grayscale = new uint8_t[width * height];
+        rgb_to_grayscale(buffer, grayscale, width, height, stride, pixel_stride);
+        erode(grayscale, width, height, stride, pixel_stride);
+        //dilate(grayscale, width, height, stride, pixel_stride);
+        grayscale_to_rgb(grayscale, buffer, width, height, stride, pixel_stride);
+        delete[] grayscale;
 
         // You can fake a long-time process with sleep
         {
