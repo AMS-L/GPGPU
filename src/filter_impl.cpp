@@ -1,5 +1,7 @@
 #include "filter_impl.h"
 
+#include <fstream>
+#include <vector>
 #include <iostream>
 #include <cmath>
 #include <cstdint>
@@ -166,7 +168,12 @@ void grayscale_to_rgb(uint8_t* buffer_gray, uint8_t* buffer_rgb, int width, int 
 extern "C" {
     void filter_impl(uint8_t* buffer, int width, int height, int stride, int pixel_stride)
     {
-	/*
+        std::ifstream file("subject/bg.jpg", std::ios::binary);
+        std::vector<uint8_t> buffer_bg(std::istreambuf_iterator<char>(file), {});
+
+        // Si vous voulez un pointeur brut, vous pouvez obtenir un pointeur vers les données du vecteur.
+        uint8_t* background = buffer_bg.data();
+/*
         for (int y = 0; y < height; ++y)
         {
             rgb* lineptr = (rgb*) (buffer + y * stride);
@@ -174,24 +181,21 @@ extern "C" {
             {
                 lineptr[x].r = 0; // Back out red component
 
-                if (x < logo_width && y < logo_height)
+                if (y * width + x < buffer_bg.size())
                 {
-                    float alpha = logo_data[y * logo_width + x] / 255.f;
+                    float alpha = background[y * width + x] / 255.f;
                     lineptr[x].g = uint8_t(alpha * lineptr[x].g + (1-alpha) * 255);
                     lineptr[x].b = uint8_t(alpha * lineptr[x].b + (1-alpha) * 255);
 
                 }
             }
         }
-	*/
-
-	uint8_t* buffer_gray = rgb_to_grayscale(buffer, width, height, stride, pixel_stride);
-	//erode(buffer_gray, width, height, stride, pixel_stride);
-	//dilate(buffer_gray, width, height, stride, pixel_stride);
-	grayscale_to_rgb(buffer_gray, buffer, width, height, stride, pixel_stride);
-	free(buffer_gray);
-
-	
+*/
+        uint8_t* buffer_gray = rgb_to_grayscale(buffer, width, height, stride, pixel_stride);
+        //erode(buffer_gray, width, height, stride, pixel_stride);
+        //dilate(buffer_gray, width, height, stride, pixel_stride);
+        grayscale_to_rgb(background, buffer, width, height, stride, pixel_stride);
+        free(buffer_gray);
 
         // You can fake a long-time process with sleep
         {
