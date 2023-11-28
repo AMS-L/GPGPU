@@ -223,7 +223,7 @@ void residual_filter(uint8_t* buffer_copy, int width, int height, int stride, in
 
 void hysteresis_thresholding(uint8_t* buffer_gray, int width, int height, int stride, int pixel_stride, int lowThreshold, int highThreshold) {
     // Create a temporary buffer for the thresholded image
-    uint8_t* temp_buffer = new uint8_t[stride * height];
+    uint8_t* temp_buffer = new uint8_t[width * height];
 
     // Iterate through the image
     for (int y = 0; y < height; ++y) {
@@ -283,7 +283,9 @@ void apply_red_filter(uint8_t* buffer, uint8_t* buffer_copy, int width, int heig
 
 		// Check if it's a white pixel (result of hysteresis thresholding)
 		if (pixel_value != 0) { // FIXME gestion couleur rouge visibiliter
-		   buffer[idx] += 0.5 * 255 ;
+		   buffer[idx] = 0.5 * 255 ;
+		   buffer[idx + 1] = 0;
+		   buffer[idx + 2] = 0;
 		}
 		else {
 		   buffer[idx] = buffer[idx] / 2;
@@ -323,22 +325,23 @@ void mean_background(uint8_t* background, uint8_t* buffer, int width, int height
 void median_background(uint8_t* background, uint8_t* buffer, int width, int height, int stride, int pixel_stride){
     if (background == nullptr) {
         background = new uint8_t[height * stride * pixel_stride];
+        memcpy(background, buffer, height*stride);
         my_memcopy(background, buffer, width, height, stride, pixel_stride);
         num_frame = 1;
     }
     else {
         // Update the background by taking the median
-        for (int i = 0; i < width * height * pixel_stride; ++i) {
-            std::vector<uint8_t> values;
-            values.push_back(background[i]);
-            values.push_back(buffer[i]);
-            std::sort(values.begin(), values.end());
-            if (values.size() % 2 == 0) {
-                background[i] = (values[values.size()/2 - 1] + values[values.size()/2]) / 2;
-            } else {
-                background[i] = values[values.size()/2];
-            }
-        }
+	for (int i = 0; i < width * height * pixel_stride; ++i) {
+	    std::vector<uint8_t> values;
+	    values.push_back(background[i]);
+	    values.push_back(buffer[i]);
+	    std::sort(values.begin(), values.end());
+	    if (values.size() % 2 == 0) {
+		background[i] = (values[values.size()/2 - 1] + values[values.size()/2]) / 2;
+	    } else {
+		background[i] = values[values.size()/2];
+	    }
+	}
         num_frame++;
     }
 }
@@ -347,16 +350,14 @@ extern "C" {
 
     void filter_impl(uint8_t* buffer, int width, int height, int stride, int pixel_stride)
     {
-
-        /*if (first) {
+        if (first) {
             background = new uint8_t[height*stride*pixel_stride];
-            memcpy(background, buffer, height*stride);
+	    my_memcopy(background, buffer, width, height, stride, pixel_stride);
             first = false;
         }
-	*/
 	
 
-	//median_background(background, buffer, width, height, stride, pixel_stride);
+	median_background(background, buffer, width, height, stride, pixel_stride);
         uint8_t* buffer_copy = new uint8_t [height*stride*pixel_stride];
 	my_memcopy(buffer_copy, buffer, width, height, stride, pixel_stride);
 	residual_filter(buffer_copy, width, height, stride, pixel_stride);
@@ -366,13 +367,13 @@ extern "C" {
         erode(grayscale, width, height, stride, pixel_stride);
         dilate(grayscale, width, height, stride, pixel_stride);
         int low_threshold = 4;
-        int high_threshold = 30;
+        int high_threshold = 10;
 
         hysteresis_thresholding(grayscale, width, height, stride, pixel_stride, low_threshold, high_threshold);
+        grayscale_to_rgb(grayscale, buffer_copy, width, height, stride, pixel_stride);
 
 	apply_red_filter(buffer, buffer_copy, width, height, stride, pixel_stride);
 
-        //grayscale_to_rgb(grayscale, buffer_copy, width, height, stride, pixel_stride);
 
         delete[] grayscale;
         // You can fake a long-time process with sleep
