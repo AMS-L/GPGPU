@@ -186,12 +186,6 @@ void set_black(uint8_t* buffer, int i, int j, int stride, int pixel_stride) {
 }
 
 
-void apply_red_filter(uint8_t* buffer, int i, int j, int stride, int pixel_stride) {
-    int index = i * stride + j * pixel_stride;
-
-    buffer[index] = buffer[index] + 0.5 * 255;
-}
-
 void residual_filter(uint8_t* buffer_copy, int width, int height, int stride, int pixel_stride){
         for (int i = 0; i < height; i++) {
             for (int j = 0; j < width; j++) {
@@ -322,10 +316,10 @@ void mean_background(uint8_t* background, uint8_t* buffer, int width, int height
 	}
 }
 
+
 void median_background(uint8_t* background, uint8_t* buffer, int width, int height, int stride, int pixel_stride){
     if (background == nullptr) {
         background = new uint8_t[height * stride * pixel_stride];
-        memcpy(background, buffer, height*stride);
         my_memcopy(background, buffer, width, height, stride, pixel_stride);
         num_frame = 1;
     }
@@ -367,7 +361,7 @@ extern "C" {
         erode(grayscale, width, height, stride, pixel_stride);
         dilate(grayscale, width, height, stride, pixel_stride);
         int low_threshold = 4;
-        int high_threshold = 10;
+        int high_threshold = 30;
 
         hysteresis_thresholding(grayscale, width, height, stride, pixel_stride, low_threshold, high_threshold);
         grayscale_to_rgb(grayscale, buffer_copy, width, height, stride, pixel_stride);

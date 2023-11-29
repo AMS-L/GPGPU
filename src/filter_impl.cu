@@ -153,10 +153,170 @@ __global__ void grayscale_to_rgb_kernel(uint8_t* buffer_gray, uint8_t* buffer_rg
 
     int idx_gray = y * width + x;
     int idx_rgb = y * stride + x * pixel_stride;
-    buffer_rgb[idx_rgb] = buffer_gray[idx_gray]; // R
+    /*buffer_rgb[idx_rgb] = buffer_gray[idx_gray]; // R
     buffer_rgb[idx_rgb + 1] = buffer_gray[idx_gray]; // G
-    buffer_rgb[idx_rgb + 2] = buffer_gray[idx_gray]; // B
+    buffer_rgb[idx_rgb + 2] = buffer_gray[idx_gray]; // B*/
+    uint8_t pixel_value = buffer_gray[idx_gray];
+
+    if (pixel_value != 0) {
+        buffer_rgb[idx_rgb] = 0.5 * 255;
+        buffer_rgb[idx_rgb + 1] = 0;
+        buffer_rgb[idx_rgb + 2] = 0;
+    }
 }
+
+__global__ void erode_kernel(uint8_t* dBuffer, uint8_t* temp, int width, int height, int stride, int pixel_stride) {
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (y < height && x < width) {
+        uint8_t min_pixel = 255;
+        for (int j = -1; j <= 1; ++j) {
+            for (int i = -1; i <= 1; ++i) {
+                int nx = x + i;
+                int ny = y + j;
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                    uint8_t pixel = dBuffer[ny * stride + nx * pixel_stride];
+                    min_pixel = min(min_pixel, pixel);
+                }
+            }
+        }
+        temp[y * stride + x * pixel_stride] = min_pixel;
+    }
+}
+
+__global__ void dilate_kernel(uint8_t* buffer_gray, uint8_t* temp, int width, int height) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x < width && y < height) {
+        uint8_t max_pixel = 0;
+        for (int j = -1; j <= 1; ++j) {
+            for (int i = -1; i <= 1; ++i) {
+                int nx = x + i;
+                int ny = y + j;
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                    uint8_t pixel = buffer_gray[ny * width + nx];
+                    max_pixel = max(max_pixel, pixel);
+                }
+            }
+        }
+        temp[y * width + x] = max_pixel;
+    }
+}
+
+void dilate(uint8_t* buffer_gray, int width, int height) {
+    uint8_t* temp;
+    cudaMalloc(&temp, width * height * sizeof(uint8_t));
+
+    dim3 blockSize(16, 16);
+    dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
+    dilate_kernel<<<gridSize, blockSize>>>(buffer_gray, temp, width, height);
+
+    cudaMemcpy(buffer_gray, temp, width * height * sizeof(uint8_t), cudaMemcpyDeviceToDevice);
+
+    cudaFree(temp);
+}
+
+__global__ void erode_kernel(uint8_t* buffer_gray, uint8_t* temp, int width, int height) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x < width && y < height) {
+        uint8_t min_pixel = 255;
+        for (int j = -1; j <= 1; ++j) {
+            for (int i = -1; i <= 1; ++i) {
+                int nx = x + i;
+                int ny = y + j;
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                    uint8_t pixel = buffer_gray[ny * width + nx];
+                    min_pixel = min(min_pixel, pixel);
+                }
+            }
+        }
+        temp[y * width + x] = min_pixel;
+    }
+}
+
+void erode(uint8_t* buffer_gray, int width, int height) {
+    uint8_t* temp;
+    cudaMalloc(&temp, width * height * sizeof(uint8_t));
+
+    dim3 blockSize(16, 16);
+    dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
+    erode_kernel<<<gridSize, blockSize>>>(buffer_gray, temp, width, height);
+
+    cudaMemcpy(buffer_gray, temp, width * height * sizeof(uint8_t), cudaMemcpyDeviceToDevice);
+
+    cudaFree(temp);
+}
+
+__global__ void hysteresis_thresholding_kernel(uint8_t* buffer_gray, uint8_t* temp_buffer, int width, int height, int lowThreshold, int highThreshold) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x < width && y < height) {
+        int idx = y * width + x;
+        uint8_t pixel_value = buffer_gray[idx];
+
+        if (pixel_value >= highThreshold) {
+            temp_buffer[idx] = 255;
+        } else if (pixel_value < lowThreshold) {
+            temp_buffer[idx] = 0;
+        } else {
+            bool hasStrongNeighbor = false;
+            for (int j = -1; j <= 1; ++j) {
+                for (int i = -1; i <= 1; ++i) {
+                    int nx = x + i;
+                    int ny = y + j;
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                        int neighbor_idx = ny * width + nx;
+                        if (buffer_gray[neighbor_idx] == 255) {
+                            hasStrongNeighbor = true;
+                            break;
+                        }
+                    }
+                }
+                if (hasStrongNeighbor) {
+                    break;
+                }
+            }
+            temp_buffer[idx] = hasStrongNeighbor ? 128 : 0;
+        }
+    }
+}
+
+void hysteresis_thresholding(uint8_t* buffer_gray, int width, int height, int lowThreshold, int highThreshold) {
+    uint8_t* temp_buffer;
+    cudaMalloc(&temp_buffer, width * height * sizeof(uint8_t));
+
+    dim3 blockSize(16, 16);
+    dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
+    hysteresis_thresholding_kernel<<<gridSize, blockSize>>>(buffer_gray, temp_buffer, width, height, lowThreshold, highThreshold);
+
+    cudaMemcpy(buffer_gray, temp_buffer, width * height * sizeof(uint8_t), cudaMemcpyDeviceToDevice);
+
+    cudaFree(temp_buffer);
+}
+
+int num_frame = 0;
+
+__global__ void mean_background_kernel(uint8_t* background, uint8_t* buffer, int width, int height,int stride, int pixel_stride, int num_frame) {
+
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (x >= width || y >= height)
+        return;
+
+    int idx_rgb = y * stride + x * pixel_stride;
+
+    background[idx_rgb] = (background[idx_rgb] * num_frame + buffer[idx_rgb]) / (num_frame + 1);
+    background[idx_rgb + 1] = (background[idx_rgb + 1] * num_frame + buffer[idx_rgb + 1]) / (num_frame + 1);
+    background[idx_rgb + 2] = (background[idx_rgb + 2] * num_frame + buffer[idx_rgb + 2]) / (num_frame + 1);
+    num_frame++;
+}
+
 
 extern "C" {
     void filter_impl(uint8_t* src_buffer, int width, int height, int src_stride, int pixel_stride)
@@ -172,30 +332,39 @@ extern "C" {
 
         cudaError_t err;
 
+        CHECK_CUDA_ERROR(cudaMallocPitch(&dBuffer, &pitch, width * sizeof(rgb), height));
+        CHECK_CUDA_ERROR(cudaMemcpy2D(dBuffer, pitch, src_buffer, src_stride, width * sizeof(rgb), height, cudaMemcpyDefault));
+
+
 	if (first) {
-            err = cudaMallocPitch(&background, &pitch, width * sizeof(rgb), height);
-            CHECK_CUDA_ERROR(err);
-            err = cudaMemcpy2D(background, pitch, src_buffer, src_stride, width * sizeof(rgb), height, cudaMemcpyDefault);
-            CHECK_CUDA_ERROR(err);
+            CHECK_CUDA_ERROR(cudaMallocPitch(&background, &pitch, width * sizeof(rgb), height));
+            CHECK_CUDA_ERROR(cudaMemcpy2D(background, pitch, src_buffer, src_stride, width * sizeof(rgb), height, cudaMemcpyDefault));
+
+	    num_frame = 1;
             first = false;
 	}
+	else
+	    mean_background_kernel<<<gridSize, blockSize>>>(background, dBuffer, width, height, pitch, pixel_stride, num_frame);
 
-        err = cudaMallocPitch(&dBuffer, &pitch, width * sizeof(rgb), height);
-        CHECK_CUDA_ERROR(err);
-        err = cudaMemcpy2D(dBuffer, pitch, src_buffer, src_stride, width * sizeof(rgb), height, cudaMemcpyDefault);
-        CHECK_CUDA_ERROR(err);
-
+	uint8_t* final_buffer;
+        CHECK_CUDA_ERROR(cudaMallocPitch(&final_buffer, &pitch, width * sizeof(rgb), height));
+        CHECK_CUDA_ERROR(cudaMemcpy2D(final_buffer, pitch, src_buffer, src_stride, width * sizeof(rgb), height, cudaMemcpyDefault));
 
 	residual_filter_kernel<<<gridSize, blockSize>>>(dBuffer, background, width, height, pitch, pixel_stride);
         uint8_t* grayscale;
-        err = cudaMalloc(&grayscale, width * height);
-        CHECK_CUDA_ERROR(err);
+        CHECK_CUDA_ERROR(cudaMalloc(&grayscale, width * height));
 
         rgb_to_grayscale_kernel<<<gridSize, blockSize>>>(dBuffer, grayscale, width, height, pitch, pixel_stride);
 
-	grayscale_to_rgb_kernel<<<gridSize, blockSize>>>(grayscale, dBuffer, width, height, pitch, pixel_stride);
+	erode(grayscale, width, height);
+	dilate(grayscale, width, height);
+	int lowThreshold = 4;
+       	int highThreshold = 30;
+	hysteresis_thresholding(grayscale, width, height, lowThreshold, highThreshold);
 
-        err = cudaMemcpy2D(src_buffer, src_stride, dBuffer, pitch, width * sizeof(rgb), height, cudaMemcpyDefault);
+	grayscale_to_rgb_kernel<<<gridSize, blockSize>>>(grayscale, final_buffer, width, height, pitch, pixel_stride);
+
+        err = cudaMemcpy2D(src_buffer, src_stride, final_buffer, pitch, width * sizeof(rgb), height, cudaMemcpyDefault);
         CHECK_CUDA_ERROR(err);
 
         cudaFree(dBuffer);
