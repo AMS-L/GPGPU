@@ -34,16 +34,17 @@ struct lab {
     uint8_t l, a, b;
 };
 
+
 __device__ void rgb2xyz_kernel(const rgb& in, double& x, double& y, double& z) {
     auto r = in.r / 255.0;
     auto g = in.g / 255.0;
     auto b = in.b / 255.0;
 
-    if (r > 0.04045) r = pow((r + 0.055) / 1.055, 2.4);
+    if (r > 0.04045) r = __powf((r + 0.055) / 1.055, 2.4);
     else r = r / 12.92;
-    if (g > 0.04045) g = pow((g + 0.055) / 1.055, 2.4);
+    if (g > 0.04045) g = __powf((g + 0.055) / 1.055, 2.4);
     else g = g / 12.92;
-    if (b > 0.04045) b = pow((b + 0.055) / 1.055, 2.4);
+    if (b > 0.04045) b = __powf((b + 0.055) / 1.055, 2.4);
     else b = b / 12.92;
 
     r *= 100.0;
@@ -53,7 +54,6 @@ __device__ void rgb2xyz_kernel(const rgb& in, double& x, double& y, double& z) {
     // Observer. = 2°, Illuminant = D65
     x = r * 0.4124 + g * 0.3576 + b * 0.1805;
     y = r * 0.2126 + g * 0.7152 + b * 0.0722;
-    // Your lab_distance function code goes here
     z = r * 0.0193 + g * 0.1192 + b * 0.9505;
 }
 
@@ -62,11 +62,11 @@ __device__ void xyz2lab_kernel(double x, double y, double z, lab& out) {
     y /= 100.000;
     z /= 108.883;
 
-    if (x > 0.008856) x = pow(x, 1.0 / 3.0);
+    if (x > 0.008856) x = __powf(x, 1.0 / 3.0);
     else x = (7.787 * x) + (16.0 / 116.0);
-    if (y > 0.008856) y = pow(y, 1.0 / 3.0);
+    if (y > 0.008856) y = __powf(y, 1.0 / 3.0);
     else y = (7.787 * y) + (16.0 / 116.0);
-    if (z > 0.008856) z = pow(z, 1.0 / 3.0);
+    if (z > 0.008856) z = __powf(z, 1.0 / 3.0);
     else z = (7.787 * z) + (16.0 / 116.0);
 
     out.l = (116.0 * y) - 16.0;
@@ -74,59 +74,102 @@ __device__ void xyz2lab_kernel(double x, double y, double z, lab& out) {
     out.b = 200.0 * (y - z);
 }
 
-__device__ void rgb2lab_kernel(const rgb& in, lab& out) {
-    double x, y, z;
-    rgb2xyz_kernel(in, x, y, z);
-    xyz2lab_kernel(x, y, z, out);
+
+
+__global__ void residual_filter_kernel(uint8_t* dBuffer, uint8_t* background, int width, int height, int stride, int pixel_stride) {
+    // Define shared memory for buffer and background pixels
+    __shared__ rgb buffer_shared[32][32];
+    __shared__ rgb background_shared[32][32];
+
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (i < height && j < width) {
+        // Get the pixel from the buffer and background
+	int idx = i * stride + j * pixel_stride;
+
+        // Load buffer and background pixels into shared memory
+	buffer_shared[threadIdx.y][threadIdx.x].r = dBuffer[idx];
+	buffer_shared[threadIdx.y][threadIdx.x].g = dBuffer[idx + 1];
+	buffer_shared[threadIdx.y][threadIdx.x].b = dBuffer[idx + 2];
+
+	background_shared[threadIdx.y][threadIdx.x].r = background[idx];
+	background_shared[threadIdx.y][threadIdx.x].g = background[idx + 1];
+	background_shared[threadIdx.y][threadIdx.x].b = background[idx + 2];
+    }
+
+    // Synchronize to make sure the pixels are loaded before starting the computation
+    __syncthreads();
+
+    if (i < height && j < width) {
+        // Convert RGB to Lab using shared memory
+	int idx = i * stride + j * pixel_stride;
+        lab buffer_lab, background_lab;
+    	double x, y, z;
+    	rgb2xyz_kernel(buffer_shared[threadIdx.y][threadIdx.x], x, y, z);
+    	xyz2lab_kernel(x, y, z, buffer_lab);
+
+    	rgb2xyz_kernel(background_shared[threadIdx.y][threadIdx.x], x, y, z);
+    	xyz2lab_kernel(x, y, z, background_lab);
+
+        float deltaL = buffer_lab.l - background_lab.l;
+        float deltaA = buffer_lab.a - background_lab.a;
+        float deltaB = buffer_lab.b - background_lab.b;
+
+        float distance = __fsqrt_rd(deltaL * deltaL + deltaA * deltaA + deltaB * deltaB);
+        // Calculate the lab distance
+
+        if (distance < 10) {
+    	    dBuffer[idx] = 0;     // Set red to 0
+    	    dBuffer[idx + 1] = 0; // Set green to 0
+    	    dBuffer[idx + 2] = 0; // Set blue to 0
+        }
+    }
 }
 
-
-__device__ float lab_distance_kernel(lab image1, lab image2) {
-    float deltaL = image1.l - image2.l;
-    float deltaA = image1.a - image2.a;
-    float deltaB = image1.b - image2.b;
-
-    return sqrt(deltaL * deltaL + deltaA * deltaA + deltaB * deltaB);
-}
-
-__device__ void get_rgb(uint8_t* buffer, rgb& pixel, int i, int j, int stride, int pixel_stride) {
-    int index = i * stride + j * pixel_stride;
-    pixel.r = buffer[index];
-    pixel.g = buffer[index + 1];
-    pixel.b = buffer[index + 2];
-}
-
-__device__ void set_black(uint8_t* dBuffer, int i, int j, int stride, int pixel_stride) {
-    int index = i * stride + j * pixel_stride;
-    dBuffer[index] = 0;     // Set red to 0
-    dBuffer[index + 1] = 0; // Set green to 0
-    dBuffer[index + 2] = 0; // Set blue to 0
-}
-
+/*
 __global__ void residual_filter_kernel(uint8_t* dBuffer, uint8_t* background, int width, int height, int stride, int pixel_stride) {
     int i = blockIdx.y * blockDim.y + threadIdx.y;
     int j = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (i < height && j < width) {
         // Get the pixel from the buffer and background
+	int index = i * stride + j * pixel_stride;
+
         rgb buffer_pixel;
-	get_rgb(dBuffer, buffer_pixel, i, j, stride, pixel_stride);
+	buffer_pixel.r = dBuffer[index];
+	buffer_pixel.g = dBuffer[index + 1];
+	buffer_pixel.b = dBuffer[index + 2];
+
         rgb background_pixel;
-        get_rgb(background, background_pixel, i, j, stride, pixel_stride);
+	background_pixel.r = dBuffer[index];
+	background_pixel.g = dBuffer[index + 1];
+	background_pixel.b = dBuffer[index + 2];
 
         // Convert RGB to Lab
         lab buffer_lab, background_lab;
-        rgb2lab_kernel(buffer_pixel, buffer_lab);
-        rgb2lab_kernel(background_pixel, background_lab);
+    	double x, y, z;
+    	rgb2xyz_kernel(buffer_pixel, x, y, z);
+    	xyz2lab_kernel(x, y, z, buffer_lab);
 
+    	rgb2xyz_kernel(background_pixel, x, y, z);
+    	xyz2lab_kernel(x, y, z, background_lab);
+
+        float deltaL = buffer_lab.l - background_lab.l;
+        float deltaA = buffer_lab.a - background_lab.a;
+        float deltaB = buffer_lab.b - background_lab.b;
+
+        float distance = sqrt(deltaL * deltaL + deltaA * deltaA + deltaB * deltaB);
         // Calculate the lab distance
-        float distance = lab_distance_kernel(buffer_lab, background_lab);
 
         if (distance < 10) {
-            set_black(dBuffer, i, j, stride, pixel_stride);
+    	    dBuffer[index] = 0;     // Set red to 0
+    	    dBuffer[index + 1] = 0; // Set green to 0
+    	    dBuffer[index + 2] = 0; // Set blue to 0
         }
     }
 }
+*/
 
 __global__ void rgb_to_grayscale_kernel(uint8_t* buffer, uint8_t* grayscale, int width, int height, int stride, int pixel_stride) {
     int y = blockIdx.y * blockDim.y + threadIdx.y;

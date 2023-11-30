@@ -282,9 +282,9 @@ void apply_red_filter(uint8_t* buffer, uint8_t* buffer_copy, int width, int heig
 		   buffer[idx + 2] = 0;
 		}
 		else {
-		   buffer[idx] = buffer[idx] / 2;
-		   buffer[idx + 1] = buffer[idx + 1] / 2;
-		   buffer[idx + 2] = buffer[idx + 2] / 2;
+		   buffer[idx] = buffer[idx];
+		   buffer[idx + 1] = buffer[idx + 1];
+		   buffer[idx + 2] = buffer[idx + 2];
 		}
 	    }
 	}
